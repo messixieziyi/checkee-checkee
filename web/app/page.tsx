@@ -3,21 +3,119 @@ import { Suspense } from 'react'
 import StatsCard from '@/components/StatsCard'
 import RecentChanges from '@/components/RecentChanges'
 import StatusDistribution from '@/components/charts/StatusDistribution'
+import { supabase } from '@/lib/supabase'
+
+export const dynamic = 'force-dynamic'
 
 async function getStats() {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/stats`, {
-    cache: 'no-store'
-  })
-  if (!res.ok) return null
-  return res.json()
+  try {
+    // First, get the latest snapshot for each month
+    // We'll use a raw SQL query since Supabase JS doesn't support DISTINCT ON directly
+    const { data: latestSnapshots, error: snapshotsError } = await supabase
+      .from('snapshots')
+      .select('id, month, scrape_date, total_records')
+      .order('scrape_date', { ascending: false })
+
+    if (snapshotsError || !latestSnapshots) {
+      console.error('Snapshots error:', snapshotsError)
+      return null
+    }
+
+    // Group by month and keep only the latest snapshot for each month
+    const latestByMonth = new Map<string, typeof latestSnapshots[0]>()
+    for (const snapshot of latestSnapshots) {
+      if (!latestByMonth.has(snapshot.month)) {
+        latestByMonth.set(snapshot.month, snapshot)
+      }
+    }
+
+    const latestSnapshotIds = Array.from(latestByMonth.values()).map(s => s.id)
+    const months = Array.from(latestByMonth.keys()).sort()
+
+    if (latestSnapshotIds.length === 0) {
+      return null
+    }
+
+    // Get all records from only the latest snapshots for each month
+    const { data: records, error: recordsError } = await supabase
+      .from('records')
+      .select('*')
+      .in('snapshot_id', latestSnapshotIds)
+
+    if (recordsError) {
+      console.error('Records error:', recordsError)
+      return null
+    }
+
+    if (!records || records.length === 0) {
+      return null
+    }
+
+    // Get the most recent snapshot date for metadata
+    const mostRecentSnapshot = Array.from(latestByMonth.values())
+      .sort((a, b) => new Date(b.scrape_date).getTime() - new Date(a.scrape_date).getTime())[0]
+
+    // Calculate statistics from records in latest snapshots only
+    const total = records.length
+    const statusCounts: Record<string, number> = {}
+    const visaTypeCounts: Record<string, number> = {}
+    const consulateCounts: Record<string, number> = {}
+    const waitingDays: number[] = []
+
+    records.forEach(record => {
+      const status = record.status || 'Unknown'
+      statusCounts[status] = (statusCounts[status] || 0) + 1
+
+      const visaType = record.visa_type || 'Unknown'
+      visaTypeCounts[visaType] = (visaTypeCounts[visaType] || 0) + 1
+
+      const consulate = record.consulate || 'Unknown'
+      consulateCounts[consulate] = (consulateCounts[consulate] || 0) + 1
+
+      if (record.waiting_days !== null && record.waiting_days !== undefined) {
+        waitingDays.push(record.waiting_days)
+      }
+    })
+
+    return {
+      total_records: total,
+      status_counts: statusCounts,
+      visa_type_counts: visaTypeCounts,
+      consulate_counts: consulateCounts,
+      snapshot_id: mostRecentSnapshot?.id || null,
+      snapshot_date: mostRecentSnapshot?.scrape_date || null,
+      month: mostRecentSnapshot?.month || null,
+      months_covered: months,
+      avg_waiting_days: waitingDays.length > 0
+        ? waitingDays.reduce((a, b) => a + b, 0) / waitingDays.length
+        : null,
+      min_waiting_days: waitingDays.length > 0 ? Math.min(...waitingDays) : null,
+      max_waiting_days: waitingDays.length > 0 ? Math.max(...waitingDays) : null,
+    }
+  } catch (error) {
+    console.error('Error fetching stats:', error)
+    return null
+  }
 }
 
 async function getRecentChanges() {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/changes?limit=10`, {
-    cache: 'no-store'
-  })
-  if (!res.ok) return { changes: [] }
-  return res.json()
+  try {
+    const { data: changes, error } = await supabase
+      .from('changes')
+      .select('*')
+      .order('detected_at', { ascending: false })
+      .limit(10)
+
+    if (error) {
+      console.error('Changes error:', error)
+      return { changes: [] }
+    }
+
+    return { changes: changes || [] }
+  } catch (error) {
+    console.error('Error fetching changes:', error)
+    return { changes: [] }
+  }
 }
 
 export default async function Home() {
@@ -43,6 +141,9 @@ export default async function Home() {
                 <Link href="/changes" className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Changes
                 </Link>
+                <Link href="/forum" className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                  H1B Worker Forum
+                </Link>
               </div>
             </div>
           </div>
@@ -62,7 +163,7 @@ export default async function Home() {
                 <StatsCard
                   title="Total Records"
                   value={stats.total_records}
-                  subtitle={`Latest snapshot: ${new Date(stats.snapshot_date).toLocaleDateString()}`}
+                  subtitle={stats.months_covered ? `${stats.months_covered.length} months: ${stats.months_covered[0]} to ${stats.months_covered[stats.months_covered.length - 1]}` : 'All data'}
                 />
                 <StatsCard
                   title="Pending"

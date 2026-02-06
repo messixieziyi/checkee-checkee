@@ -1,12 +1,27 @@
 import Link from 'next/link'
 import RecentChanges from '@/components/RecentChanges'
+import { supabase } from '@/lib/supabase'
+
+export const dynamic = 'force-dynamic'
 
 async function getChanges() {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/changes?limit=100`, {
-    cache: 'no-store'
-  })
-  if (!res.ok) return { changes: [] }
-  return res.json()
+  try {
+    const { data: changes, error } = await supabase
+      .from('changes')
+      .select('*')
+      .order('detected_at', { ascending: false })
+      .limit(100)
+
+    if (error) {
+      console.error('Changes error:', error)
+      return { changes: [] }
+    }
+
+    return { changes: changes || [] }
+  } catch (error) {
+    console.error('Error fetching changes:', error)
+    return { changes: [] }
+  }
 }
 
 export default async function ChangesPage() {
@@ -30,6 +45,9 @@ export default async function ChangesPage() {
                 </Link>
                 <Link href="/changes" className="border-indigo-500 text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Changes
+                </Link>
+                <Link href="/forum" className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                  H1B Worker Forum
                 </Link>
               </div>
             </div>
