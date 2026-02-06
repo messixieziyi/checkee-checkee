@@ -25,7 +25,30 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Test Mode (scrape one month)
+**Important:** Always use the virtual environment when running scripts:
+
+```bash
+# Activate virtual environment
+source venv/bin/activate
+
+# Or use the helper script
+./run.sh --month 2026-02
+```
+
+### Running the Full Pipeline (Scrape + Save to Supabase + Detect Changes)
+
+```bash
+# Scrape specific month
+python update_and_detect.py --month 2026-02
+
+# Scrape multiple months
+python update_and_detect.py --months 10
+
+# Dry run (test without saving)
+python update_and_detect.py --month 2026-02 --dry-run
+```
+
+### Test Mode (scrape one month - old script)
 ```bash
 python run_scraper.py --test
 ```
